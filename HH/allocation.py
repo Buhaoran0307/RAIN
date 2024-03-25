@@ -1,3 +1,5 @@
+
+# --s 0 --e 99 --modelname /home/buhaoran2023/NLP_Projects/AutoAPI_for_LLMs/LLM_Models/THUDM/chatglm2-6b/ --nump 1
 import argparse
 parser = argparse.ArgumentParser(description='all')
 parser.add_argument('--outdir', type=str, default='outdir')

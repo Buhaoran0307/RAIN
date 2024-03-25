@@ -10,9 +10,11 @@ parser.add_argument('--outdir', type=str, default='outdir')
 parser.add_argument('--modelname', type=str, default='modelname')
 
 args = parser.parse_args()
-maxlen = 2048
-maxT = 50
-minT = 6
+##########
+maxlen = 512
+maxT = 5
+minT = 3
+#########
 Vt = 0.8
 import copy
 import json
@@ -27,7 +29,7 @@ os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu_index)[1:-1]
 from datasets import load_dataset
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoTokenizer, AutoModel
 from transformers.generation.logits_process import (
     LogitsProcessorList,
     RepetitionPenaltyLogitsProcessor,
@@ -104,7 +106,7 @@ def build_dataset_rank(
         tokenizer, split="train",
         select=None,
 ):
-    ds = load_dataset("Anthropic/hh-rlhf", data_dir="red-team-attempts", split="train")
+    ds = load_dataset("/home/buhaoran2023/Code/RAIN/HH/red_team_attempts", split="train")
     ds = ds.shuffle(seed=42)
     ds1 = ds.select(range(args.start, args.end))
     original_columns1 = ds1.column_names
@@ -150,13 +152,14 @@ if not os.path.exists('{}_dicv'.format(outdir)):
     os.makedirs('{}_dicv'.format(outdir))
 modelname = args.modelname
 print(modelname)
-tokenizer = AutoTokenizer.from_pretrained(modelname)
-model = AutoModelForCausalLM.from_pretrained(
+tokenizer = AutoTokenizer.from_pretrained(modelname, trust_remote_code=True)
+model = AutoModel.from_pretrained(
     modelname,
     # load_in_4bit=True,
     load_in_8bit=True,
     # torch_dtype=torch.float16,
     device_map="auto",
+    trust_remote_code=True
 )
 encoder = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2').cuda()
 testdataset = build_dataset_rank(tokenizer)
@@ -455,7 +458,8 @@ def gmeval(batch, model, tokenizer):
 
     initi = 0
     while 1:
-        for i in range(initi, max(maxT, initi + 15)):
+        # for i in range(initi, max(maxT, initi + 15)):
+        for i in range(initi, maxT):
             search(root, state, model, tokenizer, dic, dicp, maxlen=maxlen)
             try:
                 bq, bfn = root.get_max_nq_value()
