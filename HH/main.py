@@ -12,8 +12,8 @@ parser.add_argument('--modelname', type=str, default='modelname')
 args = parser.parse_args()
 ##########
 maxlen = 512
-maxT = 5
-minT = 3
+maxT = 50
+minT = 6
 #########
 Vt = 0.8
 import copy

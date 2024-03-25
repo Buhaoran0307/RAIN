@@ -5,6 +5,8 @@ import uvicorn, json, datetime
 import random
 import hashlib
 import time
+import requests
+import json
 # coding=utf-8
 import argparse
 
@@ -18,10 +20,14 @@ parser.add_argument('--modelname', type=str, default='modelname')
 
 args = parser.parse_args()
 ##########
+# /home/buhaoran2023/NLP_Projects/AutoAPI_for_LLMs/LLM_Models/Llama-2-7b
+# /home/buhaoran2023/NLP_Projects/AutoAPI_for_LLMs/LLM_Models/THUDM/chatglm2-6b
+# /home/buhaoran2023/NLP_Projects/AutoAPI_for_LLMs/LLM_Models/mistralai/Mistral-7B-Instruct-v0.2
 modelname = "/home/buhaoran2023/NLP_Projects/AutoAPI_for_LLMs/LLM_Models/THUDM/chatglm2-6b"
-maxlen = 400
+maxlen = 512
 maxT = 5
 minT = 3
+eval_times = 0
 ##########
 Vt = 0.8
 import copy
@@ -34,10 +40,8 @@ import torch
 import torch.nn.functional as F
 
 os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu_index)[1:-1]
-from datasets import load_dataset
-from torch.utils.data import DataLoader
 from tqdm import tqdm
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, AutoModel
 from transformers.generation.logits_process import (
     LogitsProcessorList,
     RepetitionPenaltyLogitsProcessor,
@@ -139,44 +143,69 @@ def genc(s, model, tokenizer):
 
 model.eval()
 
-
 @torch.no_grad()
 def getv(getoken, model, tokenizer, dic, dicp, maxlen):
     '''
     score through self-evaluation
     '''
+    global eval_times 
+    eval_times = eval_times + 1
     text, simgstate = simg(dicp, getoken, model, tokenizer, maxlen)
     inds = find_all_indices(text, 'Human:')
     if len(inds) > 1 + 4:
         text = text[:inds[1 + 4]]
     text = text[inds[4]:]
+    dic = {
+        "text": text,
+        "getv_times": eval_times
+    }
+    print(str(dic))
     if text not in dic:
-        textA = fsred + '\n\n' + text + '\n' + redA
-        textB = fsred + '\n\n' + text + '\n' + redB
-        input_ids = tokenizer(textA, return_tensors="pt").input_ids
-        outs = model(input_ids.cuda())
-        logits = outs.logits
-        last_token_logits = logits[0, -1, :]
-        prob = F.softmax(last_token_logits.float(), dim=0)
-        p_A = prob[29909].item()  # prob of 'A'
-        p_B = prob[29933].item()  # prob of 'B'
-        if p_A > p_B:
-            A = 1
-        else:
-            A = 0
-        input_ids = tokenizer(textB, return_tensors="pt").input_ids
-        outs = model(input_ids.cuda())
-        logits = outs.logits
-        last_token_logits = logits[0, -1, :]
-        prob = F.softmax(last_token_logits.float(), dim=0)
-        p_A = prob[29909].item()
-        p_B = prob[29933].item()
-        if p_B > p_A:
-            B = 1
-        else:
-            B = 0
-        v = (A + B) / 2
-        v = (v - 0.5) * 2
+        def fun1():
+            textA = fsred + '\n\n' + text + '\n' + redA
+            textB = fsred + '\n\n' + text + '\n' + redB
+            input_ids = tokenizer(textA, return_tensors="pt").input_ids
+            outs = model(input_ids.cuda())
+            logits = outs.logits
+            last_token_logits = logits[0, -1, :]
+            prob = F.softmax(last_token_logits.float(), dim=0)
+            p_A = prob[29909].item()  # prob of 'A'
+            p_B = prob[29933].item()  # prob of 'B'
+            if p_A > p_B:
+                A = 1
+            else:
+                A = 0
+            input_ids = tokenizer(textB, return_tensors="pt").input_ids
+            outs = model(input_ids.cuda())
+            logits = outs.logits
+            last_token_logits = logits[0, -1, :]
+            prob = F.softmax(last_token_logits.float(), dim=0)
+            p_A = prob[29909].item()
+            p_B = prob[29933].item()
+            if p_B > p_A:
+                B = 1
+            else:
+                B = 0
+            v = (A + B) / 2
+            v = (v - 0.5) * 2
+            return v
+        
+        def fun2():
+            url= "http://127.0.0.1:10000/"
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer xxxxxxxx"
+            }
+            post_data = {
+                "model": "chatglm",
+                "messages": [{"role": "user", "content": text}],
+            }
+            evl_response = requests.post(url, headers=headers, json=post_data)
+            # v = 1 - json.loads(evl_response.json()['choices'][0]['message']['content'])['posion_score'] * 2
+            v = 1 if json.loads(evl_response.json()['choices'][0]['message']['content'])['posion_score'] < 0.5 else 0
+            return v
+        # dic[text] = fun1()
+        v = fun2()
         dic[text] = v
     else:
         v = dic[text]
@@ -396,6 +425,11 @@ def search(root, state, model, tokenizer, dic, dicp, maxlen=1024):
         cnode.expand(root=root, ac_p=acp, reward=reward, state=state, logits=egp)
     cnode.backup(v, embeding_token, tokenizer, encoder, path_n=path_n)
 
+def find_difference(A, B):
+    if B.startswith(A):
+        return B.replace(A, '', 1)  # 删除第一次出现的A
+    else:
+        return None
 
 @torch.no_grad()
 def gmeval(query, model, tokenizer):
@@ -417,8 +451,17 @@ def gmeval(query, model, tokenizer):
     root = node(root=None, parent=None, prior_p=0, step=0)
 
     initi = 0
+    
+    dic = {
+        "question": query,
+    }
+    print("#####################################################")
+    print("原始提问:")
+    print(json.dumps(dic, indent=2))
+    print("#####################################################")
+    index = 1
     while 1:
-        for i in tqdm(range(initi,maxT)):
+        for i in range(initi,maxT):
             search(root, state, model, tokenizer, dic, dicp, maxlen=maxlen)
             try:
                 bq, bfn = root.get_max_nq_value()
@@ -457,17 +500,23 @@ def gmeval(query, model, tokenizer):
 
         tmpstr = tokenizer.decode(state, skip_special_tokens=True)
         inds = find_all_indices(tmpstr, 'Human:')
+        
+        ans = find_difference(query ,tmpstr)
+        print("------------------------------------------------------")
+        print("第" + str(index) + "次迭代后，模型生成: \n" + ans)
+        index = index + 1
 
         if len(inds) > 1 + 4:
             break
         if len(state) > maxlen:
             break
-        print(len(state))
+        print("当前回答总tokens数目: " + str(len(state)))
+        print("------------------------------------------------------")
         if move == tokenizer.eos_token_id:
             break
     
     raina = tokenizer.decode(state, skip_special_tokens=True)
-    raina = genc(raina, model, tokenizer)
+    # raina = genc(raina, model, tokenizer)
     inds = find_all_indices(raina, 'Human:')
     if len(inds) > 1 + 4:
         raina = raina[:inds[1 + 4]]
