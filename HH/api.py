@@ -23,10 +23,11 @@ args = parser.parse_args()
 # /home/buhaoran2023/NLP_Projects/AutoAPI_for_LLMs/LLM_Models/Llama-2-7b
 # /home/buhaoran2023/NLP_Projects/AutoAPI_for_LLMs/LLM_Models/THUDM/chatglm2-6b
 # /home/buhaoran2023/NLP_Projects/AutoAPI_for_LLMs/LLM_Models/mistralai/Mistral-7B-Instruct-v0.2
-modelname = "/home/buhaoran2023/NLP_Projects/AutoAPI_for_LLMs/LLM_Models/THUDM/chatglm2-6b"
-maxlen = 512
-maxT = 5
-minT = 3
+# /home/buhaoran2023/NLP_Projects/AutoAPI_for_LLMs/LLM_Models/Llama-2-7b-chat-hf
+modelname = "/home/buhaoran2023/NLP_Projects/AutoAPI_for_LLMs/LLM_Models/Llama-2-7b-chat-hf"
+maxlen = 1024
+maxT = 50
+minT = 6
 eval_times = 0
 ##########
 Vt = 0.8
@@ -103,15 +104,17 @@ with open('./HH/r1.txt') as f:
 with open('./HH/r2.txt') as f:
     redB = f.read()
 outdir = args.outdir
-try:
-    with open('{}/res_{}.json'.format(outdir, args.index)) as f:
-        res = json.loads(f.read())
-    qs = []
-    for i in res:
-        qs.append(i['question'])
-except:
-    res = []
-    qs = []
+# try:
+#     with open('{}/res_{}.json'.format(outdir, args.index)) as f:
+#         res = json.loads(f.read())
+#     qs = []
+#     for i in res:
+#         qs.append(i['question'])
+# except:
+#     res = []
+#     qs = []
+res = []
+qs = []
 
 if not os.path.exists(outdir):
     os.makedirs(outdir)
@@ -152,9 +155,9 @@ def getv(getoken, model, tokenizer, dic, dicp, maxlen):
     eval_times = eval_times + 1
     text, simgstate = simg(dicp, getoken, model, tokenizer, maxlen)
     inds = find_all_indices(text, 'Human:')
-    if len(inds) > 1 + 4:
-        text = text[:inds[1 + 4]]
-    text = text[inds[4]:]
+    if len(inds) > 1:
+        text = text[:inds[1]]
+    text = text[inds[0]:]
     dic = {
         "text": text,
         "getv_times": eval_times
@@ -202,7 +205,8 @@ def getv(getoken, model, tokenizer, dic, dicp, maxlen):
             }
             evl_response = requests.post(url, headers=headers, json=post_data)
             # v = 1 - json.loads(evl_response.json()['choices'][0]['message']['content'])['posion_score'] * 2
-            v = 1 if json.loads(evl_response.json()['choices'][0]['message']['content'])['posion_score'] < 0.5 else 0
+            v = 0 if json.loads(evl_response.json()['choices'][0]['message']['content'])['posion_score'] < 0.5 else 1
+            # v = 1 if json.loads(evl_response.json()['choices'][0]['message']['content'])['posion_score'] < 0.5 else 0
             return v
         # dic[text] = fun1()
         v = fun2()
@@ -227,7 +231,7 @@ def simg(dicp, orstate, model, tokenizer, maxlen=1280):
             -1] == ';' or tmpstr[-1] == '\n':
             break
         inds = find_all_indices(tmpstr, 'Human:')
-        if len(inds) > 1 + 4:
+        if len(inds) > 1:
             break
         probs, past_key_values = getp(state, model, dicp, topk=-1, return_past_key_values=True,
                                       past_key_values=past_key_values)
@@ -402,7 +406,7 @@ def search(root, state, model, tokenizer, dic, dicp, maxlen=1024):
     tmpstr = tokenizer.decode(state, skip_special_tokens=True)
     inds = find_all_indices(tmpstr, 'Human:')
     # check whether the generation is finished
-    if len(state) > maxlen or action == tokenizer.eos_token_id or len(inds) > 1 + 4 or tokenizer.eos_token_id in action:
+    if len(state) > maxlen or action == tokenizer.eos_token_id or len(inds) > 1 or tokenizer.eos_token_id in action:
         v, embeding_token, path_n = getv(state, model, tokenizer, dic, dicp, maxlen)
     else:
         v, embeding_token, path_n = getv(state, model, tokenizer, dic, dicp, maxlen)
@@ -439,7 +443,7 @@ def gmeval(query, model, tokenizer):
     dic, dicp = {}, {}
     # query = batch['query'][0]
 
-    query = fschat + '\n' + query
+    # query = fschat + '\n' + query
 
     if query in qs:
         return None
@@ -452,12 +456,12 @@ def gmeval(query, model, tokenizer):
 
     initi = 0
     
-    dic = {
+    eval_dic = {
         "question": query,
     }
     print("#####################################################")
     print("原始提问:")
-    print(json.dumps(dic, indent=2))
+    print(json.dumps(eval_dic, indent=2))
     print("#####################################################")
     index = 1
     while 1:
@@ -479,7 +483,7 @@ def gmeval(query, model, tokenizer):
             move = acts[int(torch.tensor(act_probs).max(dim=0).indices)]
             move = root.get_max_n_action()
             rootd = node2dic(root, state, tokenizer)
-            save_dict(rootd, '{}_dicv/res_root_{}.json'.format(outdir, args.index))
+            # save_dict(rootd, '{}_dicv/res_root_{}.json'.format(outdir, args.index))
 
             state.extend(move)
             oroot = root
@@ -506,7 +510,7 @@ def gmeval(query, model, tokenizer):
         print("第" + str(index) + "次迭代后，模型生成: \n" + ans)
         index = index + 1
 
-        if len(inds) > 1 + 4:
+        if len(inds) > 1:
             break
         if len(state) > maxlen:
             break
@@ -518,16 +522,16 @@ def gmeval(query, model, tokenizer):
     raina = tokenizer.decode(state, skip_special_tokens=True)
     # raina = genc(raina, model, tokenizer)
     inds = find_all_indices(raina, 'Human:')
-    if len(inds) > 1 + 4:
-        raina = raina[:inds[1 + 4]]
+    if len(inds) > 1:
+        raina = raina[:inds[1]]
 
     pa = genc(query, model, tokenizer)
     inds = find_all_indices(pa, 'Human:')
-    if len(inds) > 1 + 4:
-        pa = pa[:inds[1 + 4]]
+    if len(inds) > 1:
+        pa = pa[:inds[1]]
 
     tmp = {'question': query, 'raina': raina, 'pa': pa}
-    save_dict(dic, '{}_dicv/res_{}.json'.format(outdir, args.index))
+    # save_dict(dic, '{}_dicv/res_{}.json'.format(outdir, args.index))
     return tmp
 
 app = FastAPI()
@@ -615,7 +619,7 @@ async def create_item(request: Request):
             "total_tokens": None
         }
     }
-    log = "[" + now_time + "] " + '", prompt:"' + prompt + '", response:"' + repr(tmp["raina"]) + '"'
+    log = "[" + now_time + "] " + " prompt:" + prompt + ", response:" + repr(tmp["raina"])
     print(log)
     return answer
 
